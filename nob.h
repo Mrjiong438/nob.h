@@ -884,28 +884,30 @@ void nob_cmd_render(Nob_Cmd cmd, Nob_String_Builder *render)
     }
 }
 
-#define nob_sb_append_cstr_anti_parse_win32(sb, cstr)     \
-    do                                                    \
-    {                                                     \
-        int i = 0;                                        \
-        char *s = (cstr);                                 \
-        char *p_last = (cstr);                            \
-        char *p = NULL;                                   \
-        size_t n = strlen(s);                             \
-                                                          \
-        p = strchr(s, '\"');                       \
-        while (p != NULL)                                 \
-        {                                                 \
-            nob_da_append_many(sb, p_last, p - p_last);   \
-            nob_da_append(sb, '\\');                      \
-            if(*(p - 1) == '\\') \
-                nob_da_append(sb, '\\');                      \
- \
-            p_last = p;                                   \
-            p = strchr(p + 1, '\"');                       \
-        }                                                 \
-        nob_da_append_many(sb, p_last, n - (p_last - s)); \
-    } while (0)
+#define nob_sb_append_cstr_anti_parse_win32(sb, cstr)                                         \
+do                                                                                            \
+{                                                                                             \
+    const char *s = (cstr);                                                                   \
+    size_t n = strlen(s);                                                                     \
+    const char *p_last = (cstr);                                                              \
+    const char *p = NULL;                                                                     \
+                                                                                              \
+    p = strchr(s, '\"');                                                                      \
+    while (p != NULL)                                                                         \
+    {                                                                                         \
+        size_t back_slash_count = 0;                                                          \
+        while(*(p - back_slash_count - 1) == '\\')                                            \
+            back_slash_count++;                                                               \
+        nob_da_append_many(sb, p_last, p - p_last);                                           \
+        nob_da_reserve((sb), (sb)->count + back_slash_count + 1);                             \
+        memset((sb)->items + (sb)->count, '\\', (back_slash_count + 1)*sizeof(*(sb)->items)); \
+        (sb)->count += back_slash_count + 1;                                                  \
+                                                                                              \
+        p_last = p;                                                                           \
+        p = strchr(p + 1, '\"');                                                              \
+    }                                                                                         \
+    nob_da_append_many(sb, p_last, n - (p_last - s));                                         \
+} while (0)
 
 void nob_cmd_render_win32(Nob_Cmd cmd, Nob_String_Builder *render)
 {
@@ -932,14 +934,13 @@ Nob_Proc nob_cmd_run_async_redirect(Nob_Cmd cmd, Nob_Cmd_Redirect redirect)
     }
 
     Nob_String_Builder sb = {0};
-
-#ifdef _WIN32
-    nob_cmd_render_win32(cmd, &sb);
+    nob_cmd_render(cmd, &sb);
     nob_sb_append_null(&sb);
     nob_log(NOB_INFO, "CMD: %s", sb.items);
     nob_sb_free(sb);
     memset(&sb, 0, sizeof(sb));
 
+#ifdef _WIN32
     // https://docs.microsoft.com/en-us/windows/win32/procthread/creating-a-child-process-with-redirected-input-and-output
 
     STARTUPINFO siStartInfo;
@@ -956,8 +957,6 @@ Nob_Proc nob_cmd_run_async_redirect(Nob_Cmd cmd, Nob_Cmd_Redirect redirect)
     PROCESS_INFORMATION piProcInfo;
     ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
 
-    // TODO: use a more reliable rendering of the command instead of cmd_render
-    // cmd_render is for logging primarily
     nob_cmd_render_win32(cmd, &sb);
     nob_sb_append_null(&sb);
     BOOL bSuccess = CreateProcessA(NULL, sb.items, NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo);
@@ -972,11 +971,6 @@ Nob_Proc nob_cmd_run_async_redirect(Nob_Cmd cmd, Nob_Cmd_Redirect redirect)
 
     return piProcInfo.hProcess;
 #else
-    nob_cmd_render(cmd, &sb);
-    nob_sb_append_null(&sb);
-    nob_log(NOB_INFO, "CMD: %s", sb.items);
-    nob_sb_free(sb);
-    memset(&sb, 0, sizeof(sb));
 
     pid_t cpid = fork();
     if (cpid < 0) {
